@@ -6,24 +6,49 @@ import { createInitialPlayerState, updatePhysics, InputEvents } from './physics'
 interface GameCanvasProps {
   skater: SkaterProfile;
   level: LevelData;
+  sessionTimeLeft: number | null;
+  isSessionMode: boolean;
   onStateChange?: (state: PlayerState) => void;
+  onSessionComplete?: (finalState: PlayerState) => void;
+  externalInputs?: Partial<InputState>;
 }
 
-export const GameCanvas: React.FC<GameCanvasProps> = ({ skater, level, onStateChange }) => {
+export const GameCanvas: React.FC<GameCanvasProps> = ({
+  skater,
+  level,
+  sessionTimeLeft,
+  isSessionMode,
+  onStateChange,
+  onSessionComplete,
+  externalInputs,
+}) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const playerStateRef = useRef<PlayerState>(createInitialPlayerState(level));
   const renderCtxRef = useRef<RenderContext | null>(null);
   const skaterRef = useRef<SkaterProfile>(skater);
   const levelRef = useRef<LevelData>(level);
+  const sessionCompletedRef = useRef<boolean>(false);
 
-  // Keep refs updated with current props
   useEffect(() => {
     skaterRef.current = skater;
   }, [skater]);
 
   useEffect(() => {
     levelRef.current = level;
-  }, [level]);
+    // Reset player position when level or skater changes
+    playerStateRef.current = createInitialPlayerState(level);
+    sessionCompletedRef.current = false;
+  }, [level, skater.id]);
+
+  // Session time expiration check
+  useEffect(() => {
+    if (isSessionMode && sessionTimeLeft !== null && sessionTimeLeft <= 0 && !sessionCompletedRef.current) {
+      sessionCompletedRef.current = true;
+      if (onSessionComplete) {
+        onSessionComplete(playerStateRef.current);
+      }
+    }
+  }, [sessionTimeLeft, isSessionMode, onSessionComplete]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -31,7 +56,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ skater, level, onStateCh
 
     renderCtxRef.current = createRenderContext(canvas);
 
-    // Keyboard state management
     const activeKeys = new Set<string>();
     const justPressedKeys = new Set<string>();
 
@@ -44,9 +68,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ skater, level, onStateCh
         code === 'KeyS' ||
         code === 'KeyD' ||
         code === 'KeyJ' ||
-        code === 'KeyX' ||
-        code === 'KeyE' ||
+        code === 'KeyK' ||
+        code === 'KeyL' ||
         code === 'KeyZ' ||
+        code === 'KeyX' ||
+        code === 'KeyC' ||
+        code === 'KeyE' ||
         code === 'ShiftLeft' ||
         code === 'ShiftRight'
       );
@@ -75,37 +102,45 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ skater, level, onStateCh
     let animationFrameId: number;
     let lastTime = performance.now();
     let accumulator = 0;
-    const FIXED_STEP = 1000 / 60; // 60 FPS fixed physics
+    const FIXED_STEP = 1000 / 60; // 60 FPS fixed simulation
 
     const gameLoop = (now: number) => {
       const delta = Math.min(now - lastTime, 100);
       lastTime = now;
       accumulator += delta;
 
-      // Map raw keys to input state
+      const ext = externalInputs || {};
+
+      // Map raw inputs (keyboard + on-screen buttons)
       const input: InputState = {
-        left: activeKeys.has('ArrowLeft') || activeKeys.has('KeyA'),
-        right: activeKeys.has('ArrowRight') || activeKeys.has('KeyD'),
-        up: activeKeys.has('ArrowUp') || activeKeys.has('KeyW'),
-        down: activeKeys.has('ArrowDown') || activeKeys.has('KeyS'),
-        jump: activeKeys.has('Space') || activeKeys.has('KeyZ'),
-        push: activeKeys.has('KeyX') || activeKeys.has('KeyJ'),
-        action:
+        left: Boolean(activeKeys.has('ArrowLeft') || activeKeys.has('KeyA') || ext.left),
+        right: Boolean(activeKeys.has('ArrowRight') || activeKeys.has('KeyD') || ext.right),
+        up: Boolean(activeKeys.has('ArrowUp') || activeKeys.has('KeyW') || ext.up),
+        down: Boolean(activeKeys.has('ArrowDown') || activeKeys.has('KeyS') || ext.down),
+        jump: Boolean(activeKeys.has('Space') || ext.jump),
+        push: Boolean(activeKeys.has('KeyJ') || activeKeys.has('KeyZ') || ext.push),
+        grab: Boolean(activeKeys.has('KeyK') || activeKeys.has('KeyX') || ext.grab),
+        action: Boolean(
           activeKeys.has('KeyE') ||
           activeKeys.has('ShiftLeft') ||
-          activeKeys.has('ShiftRight'),
+          activeKeys.has('ShiftRight') ||
+          ext.action
+        ),
+        special: Boolean(activeKeys.has('KeyL') || activeKeys.has('KeyC') || ext.special),
       };
 
       const events: InputEvents = {
-        jumpJustPressed: justPressedKeys.has('Space') || justPressedKeys.has('KeyZ'),
-        pushJustPressed: justPressedKeys.has('KeyX') || justPressedKeys.has('KeyJ'),
+        jumpJustPressed: justPressedKeys.has('Space') || Boolean(ext.jump),
+        pushJustPressed: justPressedKeys.has('KeyJ') || justPressedKeys.has('KeyZ') || Boolean(ext.push),
+        grabJustPressed: justPressedKeys.has('KeyK') || justPressedKeys.has('KeyX') || Boolean(ext.grab),
         actionJustPressed:
           justPressedKeys.has('KeyE') ||
           justPressedKeys.has('ShiftLeft') ||
-          justPressedKeys.has('ShiftRight'),
+          justPressedKeys.has('ShiftRight') ||
+          Boolean(ext.action),
+        specialJustPressed: justPressedKeys.has('KeyL') || justPressedKeys.has('KeyC') || Boolean(ext.special),
       };
 
-      // Clear just pressed events once consumed for this tick
       justPressedKeys.clear();
 
       while (accumulator >= FIXED_STEP) {
@@ -124,7 +159,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ skater, level, onStateCh
           renderCtxRef.current,
           playerStateRef.current,
           skaterRef.current,
-          levelRef.current
+          levelRef.current,
+          sessionTimeLeft,
+          isSessionMode
         );
       }
 
@@ -142,7 +179,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ skater, level, onStateCh
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [onStateChange]);
+  }, [onStateChange, sessionTimeLeft, isSessionMode, externalInputs]);
 
   return (
     <div
@@ -151,9 +188,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ skater, level, onStateCh
         width: '100%',
         maxWidth: '960px',
         backgroundColor: '#000000',
-        border: '4px solid #444444',
-        boxShadow: '0 8px 24px rgba(0,0,0,0.8), 0 0 0 2px #f8b800',
-        borderRadius: '4px',
+        border: '4px solid #383838',
+        boxShadow: '0 0 0 2px #000000, 0 0 0 4px #7c7c7c, 0 12px 32px rgba(0,0,0,0.9)',
+        borderRadius: '2px',
         overflow: 'hidden',
         lineHeight: 0,
       }}

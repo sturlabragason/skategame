@@ -1,6 +1,7 @@
 import { LevelData, PlayerState, SkaterProfile } from '../types';
 import { NES_PALETTE } from '../data/palette';
-import { PLAYER_WIDTH, PLAYER_HEIGHT_STAND, PLAYER_HEIGHT_CROUCH } from './physics';
+import { drawCharacterSprite, drawCollectible, drawGrindSparks } from '../data/sprites';
+import { PLAYER_WIDTH, PLAYER_HEIGHT_STAND } from './physics';
 
 export const CANVAS_WIDTH = 320;
 export const CANVAS_HEIGHT = 180;
@@ -10,6 +11,7 @@ export interface RenderContext {
   ctx: CanvasRenderingContext2D;
   cameraX: number;
   cameraY: number;
+  tick: number;
 }
 
 export function createRenderContext(canvas: HTMLCanvasElement): RenderContext {
@@ -20,6 +22,7 @@ export function createRenderContext(canvas: HTMLCanvasElement): RenderContext {
     ctx,
     cameraX: 0,
     cameraY: 0,
+    tick: 0,
   };
 }
 
@@ -27,9 +30,12 @@ export function renderGame(
   rc: RenderContext,
   player: PlayerState,
   skater: SkaterProfile,
-  level: LevelData
+  level: LevelData,
+  sessionTimeLeftSeconds: number | null,
+  isSessionMode: boolean
 ): void {
   const { ctx } = rc;
+  rc.tick++;
 
   // -------------------------------------------------------------
   // Camera update: smooth follow player X, clamp to level
@@ -38,9 +44,9 @@ export function renderGame(
   rc.cameraX += (targetCamX - rc.cameraX) * 0.12;
   rc.cameraX = Math.max(0, Math.min(level.width - CANVAS_WIDTH, rc.cameraX));
 
-  // Small camera lift when high up on catwalk
-  const targetCamY = player.y < 80 ? Math.max(0, player.y - 60) : 0;
-  rc.cameraY += (targetCamY - rc.cameraY) * 0.08;
+  // Camera lift when high on catwalk
+  const targetCamY = player.y < 80 ? Math.max(0, player.y - 50) : 0;
+  rc.cameraY += (targetCamY - rc.cameraY) * 0.1;
   rc.cameraY = Math.max(0, Math.min(level.height - CANVAS_HEIGHT, rc.cameraY));
 
   const camX = Math.round(rc.cameraX);
@@ -49,58 +55,132 @@ export function renderGame(
   ctx.imageSmoothingEnabled = false;
 
   // -------------------------------------------------------------
-  // 1. CLEAR & WAREHOUSE BACKGROUND
+  // 1. WAREHOUSE & COPENHAGEN YARD BACKGROUND
   // -------------------------------------------------------------
   ctx.fillStyle = NES_PALETTE.warehouseBg;
   ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
-  // Distant parallax brick wall & steel structure
-  const bgOffset = Math.floor(camX * 0.3);
-  ctx.fillStyle = '#222238';
+  // Parallax brick wall
+  const bgX = Math.floor(camX * 0.35);
+  ctx.fillStyle = NES_PALETTE.brick;
+  ctx.fillRect(0, 20, CANVAS_WIDTH, 136);
 
-  // Background girders
-  for (let x = - (bgOffset % 80); x < CANVAS_WIDTH; x += 80) {
-    ctx.fillRect(x, 10, 8, CANVAS_HEIGHT - 34);
-    // Cross brace
-    ctx.strokeStyle = '#1d1d30';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(x, 10);
-    ctx.lineTo(x + 80, 100);
-    ctx.stroke();
+  // Brick mortar lines
+  ctx.fillStyle = NES_PALETTE.brickDark;
+  for (let by = 26; by < 156; by += 8) {
+    ctx.fillRect(0, by, CANVAS_WIDTH, 1);
+    const rowOffset = ((by / 8) % 2) * 12;
+    for (let bx = -(bgX % 24) + rowOffset; bx < CANVAS_WIDTH; bx += 24) {
+      ctx.fillRect(bx, by - 7, 1, 8);
+    }
   }
 
-  // Background high warehouse windows
-  for (let wx = 30 - (bgOffset % 120); wx < CANVAS_WIDTH; wx += 120) {
-    ctx.fillStyle = '#101020';
-    ctx.fillRect(wx, 24, 36, 40);
-    ctx.fillStyle = '#3c5888';
-    ctx.fillRect(wx + 2, 26, 15, 17);
-    ctx.fillRect(wx + 19, 26, 15, 17);
-    ctx.fillRect(wx + 2, 45, 15, 17);
-    ctx.fillRect(wx + 19, 45, 15, 17);
+  // Authentic 8-Bit Graffiti on brick wall
+  // Zone 1: "EL BARTO" graffiti
+  const elBartoX = Math.round(280 - bgX);
+  if (elBartoX > -100 && elBartoX < CANVAS_WIDTH) {
+    ctx.font = 'bold 10px monospace';
+    ctx.fillStyle = NES_PALETTE.hudGold;
+    ctx.fillText('EL BARTO', elBartoX, 60);
+    ctx.fillStyle = NES_PALETTE.sparkOrange;
+    ctx.fillText('EL BARTO', elBartoX - 1, 59);
   }
 
-  // Overhead warehouse hanging lamps
-  for (let lx = 60 - (camX % 140); lx < CANVAS_WIDTH; lx += 140) {
-    ctx.fillStyle = '#404040';
-    ctx.fillRect(lx, 0, 2, 16);
-    ctx.fillStyle = '#f8b800';
-    ctx.fillRect(lx - 4, 16, 10, 4);
-    // Subtle glow cone
-    ctx.fillStyle = 'rgba(248, 184, 0, 0.06)';
+  // Zone 2: "SKATE OR DIE"
+  const skateTagX = Math.round(920 - bgX);
+  if (skateTagX > -120 && skateTagX < CANVAS_WIDTH) {
+    ctx.font = 'bold 9px monospace';
+    ctx.fillStyle = NES_PALETTE.hudActive;
+    ctx.fillText('SKATE // 89', skateTagX, 58);
+  }
+
+  // Zone 3: "SPRINGFIELD"
+  const yardTagX = Math.round(1700 - bgX);
+  if (yardTagX > -140 && yardTagX < CANVAS_WIDTH) {
+    ctx.font = 'bold 9px monospace';
+    ctx.fillStyle = NES_PALETTE.badgeGreen;
+    ctx.fillText('SPRINGFIELD YARD', yardTagX, 58);
+  }
+
+  // Structural Steel I-Beams & Girders
+  ctx.fillStyle = NES_PALETTE.warehouseGirder;
+  for (let gx = -(camX % 120); gx < CANVAS_WIDTH; gx += 120) {
+    ctx.fillRect(gx, 0, 10, CANVAS_HEIGHT - 24);
+    // Rivets
+    ctx.fillStyle = NES_PALETTE.concreteDark;
+    ctx.fillRect(gx + 2, 24, 2, 2);
+    ctx.fillRect(gx + 6, 24, 2, 2);
+    ctx.fillRect(gx + 2, 64, 2, 2);
+    ctx.fillRect(gx + 6, 64, 2, 2);
+    ctx.fillStyle = NES_PALETTE.warehouseGirder;
+  }
+
+  // High Warehouse Windows
+  for (let wx = 40 - (bgX % 160); wx < CANVAS_WIDTH; wx += 160) {
+    ctx.fillStyle = NES_PALETTE.black;
+    ctx.fillRect(wx, 26, 32, 28);
+    ctx.fillStyle = '#203858';
+    ctx.fillRect(wx + 2, 28, 13, 11);
+    ctx.fillRect(wx + 17, 28, 13, 11);
+    ctx.fillRect(wx + 2, 41, 13, 11);
+    ctx.fillRect(wx + 17, 41, 13, 11);
+  }
+
+  // -------------------------------------------------------------
+  // 2. LEVEL GEOMETRY (Platforms, Catwalk, Slopes, Ramps)
+  // -------------------------------------------------------------
+
+  // A. Quarter-Pipes (Vert Transitions)
+  for (const qp of level.quarterPipes) {
+    const qx = Math.round(qp.x - camX);
+    const qy = Math.round(qp.y - camY);
+
+    if (qx + qp.width < -20 || qx > CANVAS_WIDTH + 20) continue;
+
+    // Draw authentic stepped/curved NES vert transition
+    ctx.fillStyle = NES_PALETTE.concreteDark;
     ctx.beginPath();
-    ctx.moveTo(lx + 1, 20);
-    ctx.lineTo(lx - 25, 156);
-    ctx.lineTo(lx + 27, 156);
+    ctx.moveTo(qx, level.groundY - camY);
+
+    const steps = 16;
+    for (let i = 0; i <= steps; i++) {
+      const stepT = i / steps;
+      const curX = qx + stepT * qp.width;
+      let u: number;
+      if (qp.facing === 'right') {
+        u = stepT;
+      } else {
+        u = 1 - stepT;
+      }
+      const curY = qy + (u * u) * qp.height;
+      ctx.lineTo(curX, curY);
+    }
+
+    ctx.lineTo(qx + qp.width, level.groundY - camY);
     ctx.closePath();
     ctx.fill();
+
+    // Steel Coping Lip
+    ctx.strokeStyle = NES_PALETTE.railSteel;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let i = 0; i <= steps; i++) {
+      const stepT = i / steps;
+      const curX = qx + stepT * qp.width;
+      let u = qp.facing === 'right' ? stepT : 1 - stepT;
+      const curY = qy + (u * u) * qp.height;
+      if (i === 0) ctx.moveTo(curX, curY);
+      else ctx.lineTo(curX, curY);
+    }
+    ctx.stroke();
+
+    // Coping rail at the lip apex
+    const copingX = qp.facing === 'right' ? qx : qx + qp.width - 8;
+    ctx.fillStyle = NES_PALETTE.railHighlight;
+    ctx.fillRect(copingX, qy - 1, 8, 2);
   }
 
-  // -------------------------------------------------------------
-  // 2. LEVEL PLATFORMS & GEOMETRY
-  // -------------------------------------------------------------
-  // Slopes / Ramps
+  // B. Slopes / Kickers
   for (const slope of level.slopes) {
     const sx1 = Math.round(slope.x1 - camX);
     const sy1 = Math.round(slope.y1 - camY);
@@ -117,7 +197,7 @@ export function renderGame(
       ctx.closePath();
       ctx.fill();
 
-      // Ramp surface highlight lip
+      // Highlight Lip
       ctx.strokeStyle = NES_PALETTE.concreteLight;
       ctx.lineWidth = 2;
       ctx.beginPath();
@@ -127,392 +207,309 @@ export function renderGame(
     }
   }
 
-  // Platforms (Ground, Catwalk, Ledges, Dumpster)
+  // C. Platforms (Ground floor, Catwalk, Funbox, Stairs)
   for (const plat of level.platforms) {
     const px = Math.round(plat.x - camX);
     const py = Math.round(plat.y - camY);
 
-    if (px + plat.width < 0 || px > CANVAS_WIDTH) continue;
+    if (px + plat.width < -10 || px > CANVAS_WIDTH + 10) continue;
 
     if (plat.id === 'ground_main') {
-      // Main concrete floor
+      // Concrete ground floor
       ctx.fillStyle = NES_PALETTE.concreteDark;
       ctx.fillRect(px, py, plat.width, plat.height);
-      // Top curb surface
-      ctx.fillStyle = NES_PALETTE.concrete;
-      ctx.fillRect(px, py, plat.width, 4);
-      // Floor grip lines
-      ctx.fillStyle = NES_PALETTE.brickDark;
-      ctx.fillRect(px, py + 4, plat.width, 1);
+      // Floor highlight line
+      ctx.fillStyle = NES_PALETTE.concreteLight;
+      ctx.fillRect(px, py, plat.width, 2);
+      // Asphalt texture dots
+      ctx.fillStyle = NES_PALETTE.black;
+      for (let dotX = px + 4; dotX < px + plat.width; dotX += 16) {
+        ctx.fillRect(dotX, py + 6, 2, 1);
+        ctx.fillRect(dotX + 8, py + 14, 2, 1);
+      }
     } else if (plat.id === 'upper_catwalk') {
-      // Catwalk steel grating
+      // High Industrial Catwalk
       ctx.fillStyle = NES_PALETTE.concreteDark;
       ctx.fillRect(px, py, plat.width, plat.height);
-      // Hazard yellow line on catwalk lip
       ctx.fillStyle = NES_PALETTE.hazardStripe1;
       ctx.fillRect(px, py, plat.width, 2);
-      // Catwalk safety railing
-      ctx.fillStyle = NES_PALETTE.railSteel;
-      ctx.fillRect(px, py - 10, plat.width, 2);
-      for (let rx = px + 10; rx < px + plat.width; rx += 25) {
-        ctx.fillRect(rx, py - 10, 2, 10);
+      // Steel support vertical beams
+      ctx.fillStyle = NES_PALETTE.warehouseGirder;
+      for (let bx = px + 30; bx < px + plat.width; bx += 80) {
+        ctx.fillRect(bx, py + 6, 4, 156 - (py + 6));
       }
-    } else if (plat.id === 'street_ledge') {
-      // Street manual pad / ledge
-      ctx.fillStyle = NES_PALETTE.brick;
-      ctx.fillRect(px, py, plat.width, plat.height);
-      // Concrete top cap
-      ctx.fillStyle = NES_PALETTE.concrete;
-      ctx.fillRect(px, py, plat.width, 4);
-      // Steel angle iron coping on the edge
-      ctx.fillStyle = NES_PALETTE.railSteel;
-      ctx.fillRect(px, py, plat.width, 2);
-    } else if (plat.id === 'yard_dumpster') {
-      // Yard dumpster obstacle
-      ctx.fillStyle = '#005820'; // Dumpster dark green
-      ctx.fillRect(px, py, plat.width, plat.height);
-      ctx.fillStyle = '#008800';
-      ctx.fillRect(px, py, plat.width, 3);
-      ctx.fillStyle = NES_PALETTE.black;
-      ctx.fillRect(px + 4, py + 6, plat.width - 8, 2);
-      ctx.fillRect(px + 4, py + 12, plat.width - 8, 2);
     } else {
-      // Quarter-pipe decks / side walls
+      // Solid obstacles (Funbox, Ledges, Stairs)
       ctx.fillStyle = NES_PALETTE.concreteDark;
       ctx.fillRect(px, py, plat.width, plat.height);
-      ctx.fillStyle = NES_PALETTE.concrete;
-      ctx.fillRect(px, py, plat.width, 4);
-      ctx.fillStyle = NES_PALETTE.railSteel;
+      ctx.fillStyle = NES_PALETTE.concreteLight;
       ctx.fillRect(px, py, plat.width, 2);
+      ctx.fillStyle = NES_PALETTE.black;
+      ctx.fillRect(px, py + plat.height - 2, plat.width, 2);
     }
   }
 
-  // Ladders
+  // D. Ladders
   for (const lad of level.ladders) {
     const lx = Math.round(lad.x - camX);
     const ly = Math.round(lad.y - camY);
 
-    if (lx + lad.width < 0 || lx > CANVAS_WIDTH) continue;
+    if (lx + lad.width < -10 || lx > CANVAS_WIDTH + 10) continue;
 
-    // Side stiles
+    // Side rails
     ctx.fillStyle = NES_PALETTE.ladderRail;
-    ctx.fillRect(lx, ly, 2, lad.height);
-    ctx.fillRect(lx + lad.width - 2, ly, 2, lad.height);
+    ctx.fillRect(lx, ly, 3, lad.height);
+    ctx.fillRect(lx + lad.width - 3, ly, 3, lad.height);
 
     // High-vis yellow rungs
     ctx.fillStyle = NES_PALETTE.ladderRung;
-    for (let ry = ly + 4; ry < ly + lad.height; ry += 6) {
+    for (let ry = ly + 4; ry < ly + lad.height; ry += 8) {
       ctx.fillRect(lx + 2, ry, lad.width - 4, 2);
+      ctx.fillStyle = NES_PALETTE.black;
+      ctx.fillRect(lx + 2, ry + 2, lad.width - 4, 1);
+      ctx.fillStyle = NES_PALETTE.ladderRung;
     }
   }
 
-  // Rails
+  // E. Rails (Galvanized Steel Flatbars & Down Handrails)
   for (const rail of level.rails) {
     const rx1 = Math.round(rail.x1 - camX);
     const ry1 = Math.round(rail.y1 - camY);
     const rx2 = Math.round(rail.x2 - camX);
+    const ry2 = Math.round(rail.y2 - camY);
 
-    if (rx2 < 0 || rx1 > CANVAS_WIDTH) continue;
+    if (Math.max(rx1, rx2) < -10 || Math.min(rx1, rx2) > CANVAS_WIDTH + 10) continue;
 
-    // Upright support legs
-    ctx.fillStyle = NES_PALETTE.railShadow;
-    const postSpacing = 30;
-    for (let px = rx1 + 10; px < rx2; px += postSpacing) {
-      ctx.fillRect(px - 1, ry1 + 2, 2, 10);
-      ctx.fillStyle = NES_PALETTE.black;
-      ctx.fillRect(px - 3, ry1 + 10, 6, 2);
-      ctx.fillStyle = NES_PALETTE.railShadow;
+    // Rail support vertical posts
+    ctx.fillStyle = NES_PALETTE.concreteDark;
+    const postCount = 3;
+    for (let p = 0; p <= postCount; p++) {
+      const pt = p / postCount;
+      const postX = Math.round(rx1 + pt * (rx2 - rx1));
+      const postY = Math.round(ry1 + pt * (ry2 - ry1));
+      ctx.fillRect(postX - 1, postY, 3, level.groundY - camY - postY);
     }
 
-    // Rail pipe
-    ctx.fillStyle = NES_PALETTE.railSteel;
-    ctx.fillRect(rx1, ry1, rx2 - rx1, 3);
-    // Chrome glint highlight
-    ctx.fillStyle = NES_PALETTE.railHighlight;
-    ctx.fillRect(rx1, ry1, rx2 - rx1, 1);
+    // Main rail bar
+    ctx.strokeStyle = NES_PALETTE.railShadow;
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(rx1, ry1 + 1);
+    ctx.lineTo(rx2, ry2 + 1);
+    ctx.stroke();
+
+    ctx.strokeStyle = NES_PALETTE.railSteel;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(rx1, ry1);
+    ctx.lineTo(rx2, ry2);
+    ctx.stroke();
+
+    ctx.strokeStyle = NES_PALETTE.railHighlight;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(rx1, ry1 - 1);
+    ctx.lineTo(rx2, ry2 - 1);
+    ctx.stroke();
+  }
+
+  // F. Collectibles (S-K-A-T-E letters & Secret VHS Tape)
+  for (const item of level.collectibles) {
+    if (!item.collected) {
+      const ix = Math.round(item.x - camX);
+      const iy = Math.round(item.y - camY);
+      if (ix >= -15 && ix <= CANVAS_WIDTH + 15) {
+        drawCollectible(ctx, item.type, item.letter, ix, iy, rc.tick);
+      }
+    }
   }
 
   // -------------------------------------------------------------
-  // 3. SKATER & SKATEBOARD SPRITE RENDERING
+  // 3. SKATER & SPRITE RENDERING
   // -------------------------------------------------------------
-  renderPlayer(ctx, player, skater, camX, camY);
+  const playerScreenX = Math.round(player.x - camX);
+  const playerScreenY = Math.round(player.y - camY);
+
+  drawCharacterSprite(ctx, player, skater, playerScreenX, playerScreenY);
+
+  // Grind sparks emitter
+  if (player.mode === 'grind') {
+    drawGrindSparks(
+      ctx,
+      playerScreenX + 8,
+      playerScreenY + PLAYER_HEIGHT_STAND - 2,
+      rc.tick
+    );
+  }
 
   // -------------------------------------------------------------
-  // 4. RETRO NES HUD OVERLAY
+  // 4. FLOATING HUD OVER SKATER (Grind Gauge, Caveman Timer, Trick)
   // -------------------------------------------------------------
-  renderHUD(ctx, player, skater);
+  // A. Grind Balance Gauge
+  if (player.mode === 'grind') {
+    const gaugeW = 28;
+    const gaugeH = 4;
+    const gx = playerScreenX + 8 - gaugeW / 2;
+    const gy = playerScreenY - 10;
+
+    // Gauge frame
+    ctx.fillStyle = NES_PALETTE.black;
+    ctx.fillRect(gx - 1, gy - 1, gaugeW + 2, gaugeH + 2);
+    ctx.fillStyle = NES_PALETTE.concreteDark;
+    ctx.fillRect(gx, gy, gaugeW, gaugeH);
+
+    // Center safe zone tick
+    ctx.fillStyle = NES_PALETTE.badgeGreen;
+    ctx.fillRect(gx + gaugeW / 2 - 1, gy, 2, gaugeH);
+
+    // Balance indicator needle
+    const needleX = Math.max(
+      gx + 1,
+      Math.min(gx + gaugeW - 3, Math.round(gx + gaugeW / 2 + player.grindBalance * (gaugeW / 2)))
+    );
+    const isDangerous = Math.abs(player.grindBalance) > 0.75;
+    ctx.fillStyle = isDangerous ? NES_PALETTE.badgeRed : NES_PALETTE.hudGold;
+    ctx.fillRect(needleX, gy - 1, 3, gaugeH + 2);
+  }
+
+  // B. Caveman Combo Bridge 2.5s Countdown Bar
+  if (player.mode === 'walk' && player.cavemanComboTimer > 0) {
+    const barW = Math.round((player.cavemanComboTimer / 150) * 32);
+    const bx = playerScreenX + 8 - 16;
+    const by = playerScreenY - 8;
+
+    ctx.fillStyle = NES_PALETTE.black;
+    ctx.fillRect(bx - 1, by - 1, 34, 4);
+    ctx.fillStyle = NES_PALETTE.hudActive;
+    ctx.fillRect(bx, by, barW, 2);
+    ctx.fillStyle = NES_PALETTE.hudWhite;
+    ctx.font = '6px monospace';
+    ctx.fillText('CAVEMAN!', bx, by - 3);
+  }
+
+  // C. Floating active trick banner
+  if (player.currentTrick && player.trickTimer > 0) {
+    ctx.font = 'bold 8px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    const tx = playerScreenX + 8;
+    const ty = playerScreenY - 4;
+
+    ctx.fillStyle = NES_PALETTE.black;
+    ctx.fillText(player.currentTrick.name.toUpperCase(), tx + 1, ty + 1);
+    ctx.fillText(player.currentTrick.name.toUpperCase(), tx - 1, ty - 1);
+    ctx.fillStyle =
+      player.currentTrick.category === 'special'
+        ? NES_PALETTE.hudGold
+        : NES_PALETTE.hudWhite;
+    ctx.fillText(player.currentTrick.name.toUpperCase(), tx, ty);
+  }
+
+  // -------------------------------------------------------------
+  // 5. AUTHENTIC 8-BIT NES SCREEN HUD (Top & Bottom)
+  // -------------------------------------------------------------
+  renderNESHud(ctx, player, skater, sessionTimeLeftSeconds, isSessionMode, rc.tick);
 }
 
-function renderPlayer(
+function renderNESHud(
   ctx: CanvasRenderingContext2D,
   player: PlayerState,
   skater: SkaterProfile,
-  camX: number,
-  camY: number
+  timeLeft: number | null,
+  isSession: boolean,
+  tick: number
 ): void {
-  const sx = Math.round(player.x - camX);
-  const sy = Math.round(player.y - camY);
-  const isFacingRight = player.facing === 'right';
-  const pal = skater.palette;
-
-  ctx.save();
-
-  // Caveman mid-air sparkle effect
-  if (player.cavemanTimer > 0) {
-    const sparkAlpha = (player.cavemanTimer / 18).toFixed(2);
-    ctx.fillStyle = `rgba(248, 184, 0, ${sparkAlpha})`;
-    ctx.fillRect(sx - 4, sy - 2, PLAYER_WIDTH + 8, 2);
-    ctx.fillRect(sx - 2, sy + PLAYER_HEIGHT_STAND, PLAYER_WIDTH + 4, 3);
-    ctx.fillStyle = NES_PALETTE.white;
-    ctx.fillRect(sx + (player.cavemanTimer % 8), sy + 4, 2, 2);
-  }
-
-  if (player.mode === 'climb') {
-    // -----------------------------------------------------------
-    // CLIMBING POSE (Facing ladder, alternating arms/legs)
-    // -----------------------------------------------------------
-    const step = Math.floor(player.y / 6) % 2;
-    // Head / hair
-    ctx.fillStyle = pal.hairSkin;
-    ctx.fillRect(sx + 3, sy, 6, 5);
-    ctx.fillStyle = NES_PALETTE.hairBrown;
-    ctx.fillRect(sx + 3, sy, 6, 2);
-
-    // Torso / Shirt
-    ctx.fillStyle = pal.shirt;
-    ctx.fillRect(sx + 2, sy + 5, 8, 6);
-
-    // Arms gripping ladder rungs
-    ctx.fillStyle = pal.hairSkin;
-    if (step === 0) {
-      ctx.fillRect(sx, sy + 3, 2, 4); // Left hand up
-      ctx.fillRect(sx + 10, sy + 6, 2, 4); // Right hand mid
-    } else {
-      ctx.fillRect(sx, sy + 6, 2, 4);
-      ctx.fillRect(sx + 10, sy + 3, 2, 4);
-    }
-
-    // Skateboard strapped onto back
-    ctx.fillStyle = pal.deck;
-    ctx.fillRect(sx + 4, sy + 4, 4, 10);
-    ctx.fillStyle = pal.wheels || NES_PALETTE.white;
-    ctx.fillRect(sx + 3, sy + 5, 2, 2);
-    ctx.fillRect(sx + 7, sy + 5, 2, 2);
-    ctx.fillRect(sx + 3, sy + 11, 2, 2);
-    ctx.fillRect(sx + 7, sy + 11, 2, 2);
-
-    // Pants / Legs
-    ctx.fillStyle = pal.pants;
-    if (step === 0) {
-      ctx.fillRect(sx + 2, sy + 11, 3, 5);
-      ctx.fillRect(sx + 7, sy + 11, 3, 3);
-    } else {
-      ctx.fillRect(sx + 2, sy + 11, 3, 3);
-      ctx.fillRect(sx + 7, sy + 11, 3, 5);
-    }
-    // Shoes
-    ctx.fillStyle = pal.shoes || NES_PALETTE.black;
-    ctx.fillRect(sx + 2, sy + 16, 3, 2);
-    ctx.fillRect(sx + 7, sy + 16, 3, 2);
-  } else if (player.mode === 'walk') {
-    // -----------------------------------------------------------
-    // WALKING ON FOOT (Crisp NES walk + board under arm)
-    // -----------------------------------------------------------
-    const walkFrame = Math.abs(player.vx) > 0.1 ? player.animationFrame : 0;
-
-    // Head & Face
-    ctx.fillStyle = pal.hairSkin;
-    ctx.fillRect(sx + 3, sy, 6, 5);
-    ctx.fillStyle = NES_PALETTE.hairBrown;
-    ctx.fillRect(sx + 3, sy, 6, 2);
-    // Eye
-    ctx.fillStyle = NES_PALETTE.black;
-    const eyeX = isFacingRight ? sx + 7 : sx + 3;
-    ctx.fillRect(eyeX, sy + 2, 1, 1);
-
-    // Torso / Shirt
-    ctx.fillStyle = pal.shirt;
-    ctx.fillRect(sx + 3, sy + 5, 6, 6);
-
-    // Skateboard carried under arm!
-    if (player.carriedBoard) {
-      ctx.fillStyle = pal.deck;
-      const boardX = isFacingRight ? sx + 1 : sx + 7;
-      ctx.fillRect(boardX, sy + 6, 3, 10);
-      ctx.fillStyle = pal.wheels || NES_PALETTE.white;
-      ctx.fillRect(boardX - 1, sy + 7, 2, 2);
-      ctx.fillRect(boardX - 1, sy + 13, 2, 2);
-    }
-
-    // Walking Legs animation
-    ctx.fillStyle = pal.pants;
-    if (walkFrame === 1) {
-      // Step forward
-      ctx.fillRect(sx + 2, sy + 11, 3, 5);
-      ctx.fillRect(sx + 7, sy + 11, 3, 4);
-    } else if (walkFrame === 3) {
-      // Step back
-      ctx.fillRect(sx + 3, sy + 11, 3, 4);
-      ctx.fillRect(sx + 7, sy + 11, 3, 5);
-    } else {
-      // Standing
-      ctx.fillRect(sx + 3, sy + 11, 3, 5);
-      ctx.fillRect(sx + 6, sy + 11, 3, 5);
-    }
-
-    // Shoes
-    ctx.fillStyle = pal.shoes || NES_PALETTE.black;
-    ctx.fillRect(sx + 2, sy + 16, 3, 2);
-    ctx.fillRect(sx + 6, sy + 16, 3, 2);
-  } else {
-    // -----------------------------------------------------------
-    // SKATEBOARDING (On-Board)
-    // -----------------------------------------------------------
-    const isCrouch = player.isCrouching;
-    const isAir = !player.isGrounded;
-    const isPushing = player.pushTimer > 0;
-
-    const bodyY = isCrouch ? sy + 5 : sy;
-
-    // Head & Cap / Hair
-    ctx.fillStyle = pal.hairSkin;
-    ctx.fillRect(sx + 3, bodyY, 6, 5);
-    ctx.fillStyle = NES_PALETTE.hairBrown;
-    ctx.fillRect(sx + 3, bodyY, 6, 2);
-    // Eye
-    ctx.fillStyle = NES_PALETTE.black;
-    const eyeX = isFacingRight ? sx + 7 : sx + 3;
-    ctx.fillRect(eyeX, bodyY + 2, 1, 1);
-
-    // Torso / Shirt
-    ctx.fillStyle = pal.shirt;
-    const torsoHeight = isCrouch ? 4 : 6;
-    ctx.fillRect(sx + 2, bodyY + 5, 8, torsoHeight);
-
-    // Arms
-    ctx.fillStyle = pal.hairSkin;
-    if (isAir) {
-      // Arms out for vert / air balance
-      ctx.fillRect(sx - 1, bodyY + 5, 3, 2);
-      ctx.fillRect(sx + 9, bodyY + 4, 3, 2);
-    } else if (isCrouch) {
-      // Hands lowered to deck
-      ctx.fillRect(sx + 1, bodyY + 7, 2, 4);
-      ctx.fillRect(sx + 8, bodyY + 7, 2, 4);
-    } else if (isPushing) {
-      // Pushing arm back
-      const armBackX = isFacingRight ? sx : sx + 10;
-      ctx.fillRect(armBackX, bodyY + 6, 2, 4);
-    }
-
-    // Pants / Legs
-    ctx.fillStyle = pal.pants;
-    if (isCrouch) {
-      // Deep knee tuck
-      ctx.fillRect(sx + 1, bodyY + 9, 4, 4);
-      ctx.fillRect(sx + 7, bodyY + 9, 4, 4);
-    } else if (isAir) {
-      // Knees bent up
-      ctx.fillRect(sx + 2, bodyY + 10, 3, 4);
-      ctx.fillRect(sx + 7, bodyY + 10, 3, 4);
-    } else if (isPushing) {
-      // One foot on board, one kicking back
-      ctx.fillRect(sx + 4, bodyY + 11, 4, 4);
-      const kickX = isFacingRight ? sx - 2 : sx + 9;
-      ctx.fillRect(kickX, bodyY + 12, 3, 4);
-    } else {
-      // Regular skate stance
-      ctx.fillRect(sx + 2, bodyY + 11, 3, 4);
-      ctx.fillRect(sx + 7, bodyY + 11, 3, 4);
-    }
-
-    // Shoes
-    ctx.fillStyle = pal.shoes || NES_PALETTE.black;
-    ctx.fillRect(sx + 1, isCrouch ? bodyY + 12 : sy + 15, 3, 1);
-    ctx.fillRect(sx + 7, isCrouch ? bodyY + 12 : sy + 15, 3, 1);
-
-    // -----------------------------------------------------------
-    // THE SKATEBOARD
-    // -----------------------------------------------------------
-    const boardY = sy + (isCrouch ? PLAYER_HEIGHT_CROUCH : PLAYER_HEIGHT_STAND) - 2;
-    const boardW = 16;
-    const boardX = sx - 2;
-
-    // Slight board angle during Ollie ascent / descent
-    const tilt = isAir ? Math.max(-2, Math.min(2, Math.round(player.vy * 0.6))) : 0;
-
-    // Deck
-    ctx.fillStyle = pal.deck;
-    ctx.fillRect(boardX, boardY + tilt, boardW, 2);
-
-    // Grip tape top
-    ctx.fillStyle = NES_PALETTE.black;
-    ctx.fillRect(boardX + 1, boardY - 1 + tilt, boardW - 2, 1);
-
-    // Trucks & Wheels
-    ctx.fillStyle = NES_PALETTE.railSteel;
-    ctx.fillRect(boardX + 2, boardY + 2 + tilt, 2, 1);
-    ctx.fillRect(boardX + boardW - 4, boardY + 2 + tilt, 2, 1);
-
-    ctx.fillStyle = pal.wheels || NES_PALETTE.wheelUrethane;
-    ctx.fillRect(boardX + 1, boardY + 2 + tilt, 2, 2);
-    ctx.fillRect(boardX + boardW - 3, boardY + 2 + tilt, 2, 2);
-  }
-
-  ctx.restore();
-}
-
-function renderHUD(
-  ctx: CanvasRenderingContext2D,
-  player: PlayerState,
-  skater: SkaterProfile
-): void {
-  // Top HUD Bar background
-  ctx.fillStyle = 'rgba(12, 12, 20, 0.82)';
+  // Top HUD Bar
+  ctx.fillStyle = NES_PALETTE.black;
   ctx.fillRect(0, 0, CANVAS_WIDTH, 14);
-  ctx.fillStyle = NES_PALETTE.hudBorder;
+  ctx.fillStyle = NES_PALETTE.concreteDark;
   ctx.fillRect(0, 14, CANVAS_WIDTH, 1);
 
-  // Skater Name & Nickname
-  ctx.fillStyle = NES_PALETTE.hudGold;
-  ctx.font = '8px monospace';
+  ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
-  ctx.fillText(skater.name.toUpperCase(), 6, 3);
+  ctx.font = 'bold 8px monospace';
 
-  // Live Mode Badge
-  let badgeText = 'ON BOARD';
-  let badgeColor: string = NES_PALETTE.badgeGreen;
+  // 1. Skater & Score
+  ctx.fillStyle = NES_PALETTE.hudGold;
+  ctx.fillText(skater.name.split(' ')[0].toUpperCase(), 6, 3);
+  ctx.fillStyle = NES_PALETTE.hudWhite;
+  ctx.fillText(player.totalScore.toString().padStart(6, '0'), 36, 3);
 
-  if (player.mode === 'walk') {
-    badgeText = 'ON FOOT';
-    badgeColor = NES_PALETTE.badgeCyan;
-  } else if (player.mode === 'climb') {
-    badgeText = 'CLIMBING';
-    badgeColor = NES_PALETTE.badgeOrange;
+  // 2. Timer (Session Mode) or Free Skate badge
+  if (isSession && timeLeft !== null) {
+    const mins = Math.floor(timeLeft / 60);
+    const secs = timeLeft % 60;
+    const timeStr = `${mins}:${secs.toString().padStart(2, '0')}`;
+    ctx.fillStyle = timeLeft <= 15 && tick % 10 < 5 ? NES_PALETTE.badgeRed : NES_PALETTE.hudGold;
+    ctx.fillText(`TIME ${timeStr}`, 88, 3);
+  } else {
+    ctx.fillStyle = NES_PALETTE.badgeCyan;
+    ctx.fillText('FREE SKATE', 88, 3);
   }
 
-  // Draw Mode Badge
-  ctx.fillStyle = badgeColor;
-  ctx.fillRect(130, 2, 54, 10);
-  ctx.fillStyle = NES_PALETTE.black;
-  ctx.font = 'bold 7px monospace';
-  ctx.fillText(badgeText, 134, 3);
+  // 3. S-K-A-T-E Letters Collection Tracker
+  const letters = ['S', 'K', 'A', 'T', 'E'];
+  const startX = 160;
+  letters.forEach((l, idx) => {
+    const isGot = player.collectedLetters.includes(l);
+    ctx.fillStyle = isGot ? NES_PALETTE.hudGold : NES_PALETTE.concreteDark;
+    ctx.fillText(l, startX + idx * 8, 3);
+  });
 
-  // Speed bar or Trick Info
-  const absSpeed = Math.abs(player.vx);
-  ctx.fillStyle = NES_PALETTE.concreteLight;
-  ctx.font = '7px monospace';
-  ctx.fillText('SPD', 200, 3);
+  // Tape Icon
+  ctx.fillStyle = player.hasSecretTape ? NES_PALETTE.hudActive : NES_PALETTE.concreteDark;
+  ctx.fillText('📼', 204, 3);
 
-  // Speedometer ticks
+  // 4. SPECIAL METER (Grows to 100%, flashes gold when maxed!)
+  const isSpecialFull = player.specialMeter >= 100;
+  const specW = 44;
   ctx.fillStyle = NES_PALETTE.concreteDark;
-  ctx.fillRect(220, 4, 36, 6);
-  ctx.fillStyle = player.isGrounded && absSpeed > 1.8 ? NES_PALETTE.hudGold : NES_PALETTE.hudActive;
-  const speedBarW = Math.min(34, Math.round((absSpeed / 3.6) * 34));
-  ctx.fillRect(221, 5, speedBarW, 4);
+  ctx.fillRect(224, 4, specW, 6);
 
-  // Special Trick Pill
-  ctx.fillStyle = NES_PALETTE.hudWhite;
-  ctx.font = '7px monospace';
-  ctx.fillText(`★ ${skater.specialTrickName}`, 262, 3);
+  if (isSpecialFull) {
+    // Flashing gold fanfare
+    ctx.fillStyle = tick % 6 < 3 ? NES_PALETTE.hudGold : NES_PALETTE.hudWhite;
+    ctx.fillRect(225, 5, specW - 2, 4);
+    ctx.fillStyle = NES_PALETTE.black;
+    ctx.font = 'bold 6px monospace';
+    ctx.fillText('SPECIAL!', 227, 4);
+  } else {
+    ctx.fillStyle = NES_PALETTE.sparkOrange;
+    const fillW = Math.round((player.specialMeter / 100) * (specW - 2));
+    ctx.fillRect(225, 5, fillW, 4);
+    ctx.fillStyle = NES_PALETTE.hudWhite;
+    ctx.font = '6px monospace';
+    ctx.fillText('SP', 270, 4);
+  }
+
+  // -------------------------------------------------------------
+  // Bottom Active Combo String
+  // -------------------------------------------------------------
+  if (player.comboBaseScore > 0) {
+    const comboW = CANVAS_WIDTH - 20;
+    const cy = CANVAS_HEIGHT - 16;
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+    ctx.fillRect(10, cy, comboW, 14);
+    ctx.fillStyle = NES_PALETTE.hudGold;
+    ctx.fillRect(10, cy, comboW, 1);
+
+    ctx.font = 'bold 7px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    const trickListStr = player.currentComboTricks.map((t) => t.name).join(' + ');
+    const comboText = `${trickListStr}  [${player.comboBaseScore} x ${player.comboMultiplier}]`;
+
+    ctx.fillStyle = NES_PALETTE.hudWhite;
+    // Truncate if long
+    const displayCombo = comboText.length > 48 ? comboText.slice(0, 45) + '...' : comboText;
+    ctx.fillText(displayCombo, CANVAS_WIDTH / 2, cy + 7);
+  } else if (player.lastLandedScore > 0) {
+    // Flash landed points
+    ctx.font = 'bold 7px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillStyle = NES_PALETTE.hudGold;
+    ctx.fillText(`LANDED: +${player.lastLandedScore} PTS!`, CANVAS_WIDTH / 2, CANVAS_HEIGHT - 3);
+  }
 }
