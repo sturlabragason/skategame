@@ -1,0 +1,6 @@
+{
+  "name": "SkateGame - 8-Bit NES Skater",
+  "description": "8-bit NES-style skateboard game featuring authentic retro physics, Bart-style dismounts, high catwalks, and tricks.",
+  "permissions": [],
+  "capabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
